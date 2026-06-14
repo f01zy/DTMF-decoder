@@ -1,5 +1,6 @@
+#include <float.h>
 #include <math.h>
-#include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,11 @@ struct Vec2 {
   int y;
 };
 
+struct Vec2d {
+  double x;
+  double y;
+};
+
 struct Digit {
   struct Vec2 table;
   char ch;
@@ -63,21 +69,23 @@ char get_digit(struct Digit *harmonics_to_digit, size_t count, int harmonic1, in
     int x = harmonics_to_digit[i].table.x, y = harmonics_to_digit[i].table.y;
     if (MIN(harmonic1, harmonic2) == MIN(x, y) && MAX(harmonic1, harmonic2) == MAX(x, y)) return harmonics_to_digit[i].ch;
   }
-  return NULL;
+  return '\0';
 }
 
-struct Dft *calculate_dft(uint8_t *data, size_t N, int *harmonics, size_t count) {
+struct Dft *calculate_dft(int16_t *data, size_t N, int *harmonics, size_t count) {
   struct Dft *res = (struct Dft *)malloc(count * sizeof(struct Dft));
   for (int i = 0; i < count; i++) {
     int harmonic = harmonics[i];
     double sum_x = 0, sum_y = 0;
     for (int n = 0; n < N; n++) {
-      double angle = (2 * M_PI * harmonic * n) / N;
+      double angle = 2 * M_PI * harmonic * n / N;
       sum_x += data[n] * cos(angle);
       sum_y += data[n] * sin(angle);
     }
-    res[i].re = sum_x / N;
-    res[i].im = sum_y / N;
+    sum_x /= N;
+    sum_y /= N;
+    res[i].re = sum_x;
+    res[i].im = sum_y;
   }
   return res;
 }
@@ -114,7 +122,7 @@ int main(int argc, char **argv) {
   int frequencies[] = {697, 770, 852, 941, 1209, 1336, 1477, 1633};
   static const size_t FREQUENCIES_COUNT = sizeof(frequencies) / sizeof(frequencies[0]);
 
-  const int SAMPLES_COUNT = header.data_size;
+  const size_t SAMPLES_COUNT = header.data_size / (header.bits_per_sample / 8);
   const int HARMONIC_DETECTION_MAGNITUDE = 5;
   const int HARMONIC_RESOLUTION = 35;
   const int N = header.frequency / HARMONIC_RESOLUTION;
@@ -133,27 +141,42 @@ int main(int argc, char **argv) {
   }
 
   // Encoding
-  uint8_t samples[SAMPLES_COUNT];
+  char last_digit = '\0';
+  int16_t samples[SAMPLES_COUNT];
   fseek(sound, sizeof(struct WavHeader), SEEK_SET);
-  fread(samples, SAMPLES_COUNT, 1, sound);
+  fread(samples, sizeof(int16_t), SAMPLES_COUNT, sound);
   size_t curr = 0;
   while (curr + N < SAMPLES_COUNT) {
-    // TODO: переписать сортировку, вместо множества массивов должен быть массив объектов "harmonic: magnitude"
     struct Dft *dft = calculate_dft(samples + curr, N, harmonics, FREQUENCIES_COUNT);
-    double magnitudes[FREQUENCIES_COUNT];
+    struct Vec2d magnitudes[FREQUENCIES_COUNT];
     for (int i = 0; i < FREQUENCIES_COUNT; i++) {
-      magnitudes[i] = get_magnitude(dft[i]);
+      magnitudes[i].x = harmonics[i];
+      magnitudes[i].y = get_magnitude(dft[i]);
     }
-    for (int i = 0; i < FREQUENCIES_COUNT - 1; i++) {
-      for (int j = i; j < FREQUENCIES_COUNT - 1; j++) {
-        if (magnitudes[i] > magnitudes[i + 1]) continue;
-        double temp = magnitudes[i];
-        magnitudes[i] = magnitudes[i + 1];
-        magnitudes[i + 1] = temp;
+    struct Vec2d magnitude1 = {0, -DBL_MAX};
+    struct Vec2d magnitude2 = {0, -DBL_MAX};
+    for (int i = 0; i < FREQUENCIES_COUNT; i++) {
+      if (magnitudes[i].y > magnitude1.y) {
+        magnitude2 = magnitude1;
+        magnitude1 = magnitudes[i];
+      } else if (magnitudes[i].y > magnitude2.y) {
+        magnitude2 = magnitudes[i];
       }
     }
-    if (magnitudes[0] > HARMONIC_DETECTION_MAGNITUDE && magnitudes[1] > HARMONIC_DETECTION_MAGNITUDE) {}
+    if (magnitude1.y > HARMONIC_DETECTION_MAGNITUDE && magnitude2.y > HARMONIC_DETECTION_MAGNITUDE) {
+      char digit = get_digit(harmonics_to_digit, DIGITS_COUNT, magnitude1.x, magnitude2.x);
+      if (digit != '\0' && digit != last_digit) {
+        printf("%c", digit);
+        fflush(stdout);
+        last_digit = digit;
+      }
+    } else {
+      last_digit = '\0';
+    }
+    free(dft);
+    curr += SHIFT_INTERVAL;
   }
 
+  printf("\n");
   fclose(sound);
 }
