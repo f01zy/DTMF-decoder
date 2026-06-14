@@ -1,0 +1,11 @@
+BasedOnStyle: LLVM
+ColumnLimit: 160
+
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: All
